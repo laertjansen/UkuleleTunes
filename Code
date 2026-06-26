@@ -1,0 +1,424 @@
+// For this project, I used a ukulele, a matrix LED, an audio sensor inside the instrument to capture sound, an OLED display, and a servo.
+
+#include <Servo.h>
+#include <Wire.h>
+#include <Adafruit_GFX.h>
+#include <Adafruit_SSD1306.h>
+#include <LedControl.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+LedControl lc = LedControl(12, 11, 10, 1);
+
+#define LED1 2
+#define LED2 3
+#define BUTTON_PIN 4
+#define LED3 5
+#define BUZZER_PIN 7
+#define SERVO_PIN 9
+
+#define POT_PIN A1
+#define AUDIO_PIN A0
+
+Servo drumServo;
+
+int drumMode = 0;
+
+bool buttonState = HIGH;
+bool lastReading = HIGH;
+unsigned long lastDebounceTime = 0;
+const unsigned long debounceDelay = 50;
+
+unsigned long lastDrumHit = 0;
+int drumInterval = 300;
+bool servoDirection = false;
+unsigned long servoResetTime = 0;
+bool servoReturning = false;
+
+unsigned long buzzerOffTime = 0;
+bool buzzerOn = false;
+
+int levels[8] = {0};
+int peaks[8] = {0};
+
+unsigned long lastMatrixUpdate = 0;
+unsigned long lastOLED = 0;
+int audioLevel = 0;
+
+
+void updateOLED()
+{
+  display.clearDisplay();
+
+  display.setTextSize(1);
+  display.setTextColor(SSD1306_WHITE);
+
+  display.setCursor(0, 0);
+  display.print("MODE: ");
+
+  switch (drumMode)
+  {
+    case 0: display.println("OFF"); break;
+    case 1: display.println("SLOW"); break;
+    case 2: display.println("MEDIUM"); break;
+    case 3: display.println("FAST"); break;
+    case 4: display.println("CHAOS"); break;
+    case 5: display.println("DRUMS ONLY"); break;
+  }
+
+  display.setCursor(0, 16);
+  display.print("TEMPO: ");
+  display.print(drumInterval);
+  display.println("ms");
+
+  display.setCursor(0, 32);
+  display.print("AUDIO: ");
+  display.println(audioLevel);
+
+  display.display();
+}
+
+
+void drawMatrix()
+{
+  lc.clearDisplay(0);
+
+  for (int col = 0; col < 8; col++)
+  {
+    for (int row = 0; row < levels[col]; row++)
+    {
+      lc.setLed(0, col, 7 - row, true);
+    }
+
+    if (peaks[col] > 0 && peaks[col] <= 8)
+    {
+      lc.setLed(0, col, 8 - peaks[col], true);
+    }
+  }
+}
+
+
+void updateVisualizer()
+{
+  int signalMax = 0;
+  int signalMin = 1023;
+
+  for (int i = 0; i < 100; i++)
+  {
+    int sample = analogRead(AUDIO_PIN);
+
+    if (sample > signalMax) signalMax = sample;
+    if (sample < signalMin) signalMin = sample;
+  }
+
+  audioLevel = signalMax - signalMin;
+
+  if (audioLevel < 12)
+  {
+    audioLevel = 0;
+  }
+
+  int target = 0;
+
+  if (audioLevel > 0)
+  {
+    if (audioLevel < 20) target = 1;
+    else if (audioLevel < 30) target = 2;
+    else if (audioLevel < 40) target = 3;
+    else if (audioLevel < 50) target = 4;
+    else if (audioLevel < 60) target = 5;
+    else if (audioLevel < 75) target = 6;
+    else if (audioLevel < 90) target = 7;
+    else target = 8;
+  }
+
+
+  static unsigned long lastPeakDrop = 0;
+
+
+  for (int col = 0; col < 8; col++)
+  {
+    int colTarget = target;
+
+
+    if (target == 0)
+    {
+      if (random(0,100) < 90)
+      {
+        colTarget = 0;
+      }
+      else
+      {
+        colTarget = 1;
+      }
+    }
+    else if (target <= 2)
+    {
+      if (random(0,100) < 60)
+      {
+        colTarget = 0;
+      }
+      else
+      {
+        colTarget = random(1,target + 1);
+      }
+    }
+    else
+    {
+      if (random(0,100) < 35)
+      {
+        colTarget = random(target / 2,target + 1);
+      }
+      else
+      {
+        colTarget = 0;
+      }
+    }
+
+
+    colTarget = constrain(colTarget,0,8);
+
+
+    if (colTarget > levels[col])
+    {
+      levels[col] = colTarget;
+    }
+    else if (levels[col] > colTarget)
+    {
+      levels[col]--;
+    }
+
+
+    if (levels[col] > peaks[col])
+    {
+      peaks[col] = levels[col];
+    }
+  }
+
+
+  if (millis() - lastPeakDrop > 100)
+  {
+    for (int col = 0; col < 8; col++)
+    {
+      if (peaks[col] > levels[col])
+      {
+        peaks[col]--;
+      }
+    }
+
+    lastPeakDrop = millis();
+  }
+
+
+  drawMatrix();
+
+  digitalWrite(LED3,audioLevel > 25);
+}
+
+
+
+void setup()
+{
+  pinMode(BUTTON_PIN,INPUT_PULLUP);
+
+  pinMode(LED1,OUTPUT);
+  pinMode(LED2,OUTPUT);
+  pinMode(LED3,OUTPUT);
+  pinMode(BUZZER_PIN,OUTPUT);
+
+
+  drumServo.attach(SERVO_PIN);
+  drumServo.write(30);
+
+
+  Serial.begin(9600);
+
+
+  if (!display.begin(SSD1306_SWITCHCAPVCC,0x3C))
+  {
+    while(true);
+  }
+
+
+  display.clearDisplay();
+  display.display();
+
+
+  lc.shutdown(0,false);
+  lc.setIntensity(0,8);
+  lc.clearDisplay(0);
+
+
+  randomSeed(analogRead(A2));
+}
+
+
+
+void loop()
+{
+  unsigned long now = millis();
+
+
+  bool reading = digitalRead(BUTTON_PIN);
+
+
+  if (reading != lastReading)
+  {
+    lastDebounceTime = now;
+  }
+
+
+  if ((now-lastDebounceTime) > debounceDelay)
+  {
+    if (reading != buttonState)
+    {
+      buttonState = reading;
+
+
+      if(buttonState == LOW)
+      {
+        drumMode++;
+
+        if(drumMode > 5)
+        {
+          drumMode = 0;
+        }
+      }
+    }
+  }
+
+
+  lastReading = reading;
+
+
+
+  int potValue = analogRead(POT_PIN);
+
+  int pitchBase = map(
+    potValue,
+    0,
+    1023,
+    200,
+    1800
+  );
+
+
+
+  switch(drumMode)
+  {
+    case 0:
+      drumInterval = 999999;
+      break;
+
+    case 1:
+      drumInterval = 500;
+      break;
+
+    case 2:
+      drumInterval = 300;
+      break;
+
+    case 3:
+      drumInterval = 150;
+      break;
+
+    case 4:
+      drumInterval = random(70,250);
+      break;
+
+    case 5:
+      drumInterval = 300;
+      break;
+  }
+
+
+
+  if(drumMode != 0 && now-lastDrumHit >= drumInterval)
+  {
+    lastDrumHit = now;
+
+
+    if(servoDirection)
+    {
+      drumServo.write(0);
+    }
+    else
+    {
+      drumServo.write(30);
+    }
+
+
+    servoDirection = !servoDirection;
+
+
+    servoResetTime = now + 60;
+    servoReturning = true;
+
+
+    digitalWrite(LED1,HIGH);
+    digitalWrite(LED2,HIGH);
+
+
+
+    if(drumMode != 5)
+    {
+      int pitch = pitchBase + random(-120,120);
+
+      tone(
+        BUZZER_PIN,
+        pitch,
+        50
+      );
+
+
+      buzzerOffTime = now + 50;
+      buzzerOn = true;
+    }
+    else
+    {
+      noTone(BUZZER_PIN);
+      buzzerOn = false;
+    }
+  }
+
+
+
+  if(servoReturning && now >= servoResetTime)
+  {
+    drumServo.write(30);
+
+    servoReturning = false;
+
+    digitalWrite(LED1,LOW);
+    digitalWrite(LED2,LOW);
+  }
+
+
+
+  if(buzzerOn && now >= buzzerOffTime)
+  {
+    noTone(BUZZER_PIN);
+
+    buzzerOn = false;
+  }
+
+
+
+  if(now-lastMatrixUpdate > 40)
+  {
+    lastMatrixUpdate = now;
+
+    updateVisualizer();
+  }
+
+
+
+  if(now-lastOLED > 200)
+  {
+    lastOLED = now;
+
+    updateOLED();
+  }
+}
