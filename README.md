@@ -1,5 +1,4 @@
-// For this project, I used a ukulele, a matrix LED, an audio sensor inside the instrument to capture sound, an OLED display, LEDs, a buzzer, a button, and a servo.
-// A high level of creativity was also required.
+// For this project, I used a ukulele, a matrix LED, an audio sensor inside the instrument to capture sound, an OLED display, LEDs, a buzzer, a button, and a servo. A high level of creativity was also required.
 
 <img width="1280" height="720" alt="Ukulele" src="https://github.com/user-attachments/assets/44c3c60c-4722-4228-89dc-ae7717c7deb0" />
 
